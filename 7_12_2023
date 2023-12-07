@@ -1,0 +1,334 @@
+#include <LiquidCrystal.h>
+#include <Adafruit_MPU6050.h>
+#include <Adafruit_Sensor.h>
+#include <SoftwareSerial.h>
+
+// LCD //
+const int rs = 8, en = 9, d4 = 4, d5 = 5, d6 = 6, d7 = 7;
+LiquidCrystal lcd(rs, en, d4, d5, d6, d7);
+
+// MOTOR //
+int IN1 = 13;
+int IN2 = 3; //pwm 
+int IN3 = 12;
+int IN4 = 11; //pwm
+
+// IR //
+int LIR = A3;
+int RIR = A2;
+int LIRStat;
+int RIRStat;
+
+// ENCODER //
+int LEnc = 2; 
+int REnc = A4;
+int initialStateR=0;
+int initialStateL=0;
+int stateR;
+int stateL;
+int countR=0;
+int countL=0;
+float RD=0;
+float LD=0;
+float totalD;
+
+// MPU //
+Adafruit_MPU6050 mpu;
+float angle=0;
+bool Ramp = false;
+bool TopOfRamp = false;
+bool goingDown = false;
+
+/*
+// BLUETOOTH //
+char BT;
+SoftwareSerial mySerial(0, 1); 
+
+// ULTRASONIC //
+const int trigPin = 9;
+const int echoPin = 10;
+long duration;
+int distance;
+*/
+
+
+void setup() 
+{
+  // set up the LCD's number of columns and rows:
+  lcd.begin(16, 2);
+  lcd.setCursor(0,0);
+  lcd.print("Angle: ");
+  lcd.setCursor(0,1);
+  lcd.print("Distance: ");
+  
+  Serial.begin(9600);
+
+  // Set the motor pins
+  pinMode(IN1, OUTPUT);
+  pinMode(IN2, OUTPUT);
+  pinMode(IN3, OUTPUT);
+  pinMode(IN4, OUTPUT);
+
+  // set the IR pins
+  pinMode(LIR,INPUT);
+  pinMode(RIR,INPUT);
+
+  // set the Encoder pins
+  pinMode(LEnc,INPUT);
+  pinMode(REnc,INPUT);
+
+  // set the Ultrasonic pins
+	//pinMode(trigPin, OUTPUT);
+	//pinMode(echoPin, INPUT);
+
+  //mySerial.begin(9600); // for bluetooth
+
+  // MPU //
+  // Try to initialize!
+    if (!mpu.begin()) {
+		   Serial.println("Failed to find MPU6050 chip");
+		   while (1) {
+		        delay(10);
+		   }
+	   }
+	   Serial.println("MPU6050 Found!");
+
+	// set accelerometer range to +-8G
+	mpu.setAccelerometerRange(MPU6050_RANGE_8_G);
+
+	// set gyro range to +- 2000 deg/s
+	mpu.setGyroRange(MPU6050_RANGE_2000_DEG);
+
+	// set filter bandwidth to 21 Hz 
+	mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
+
+}
+
+
+
+void loop()
+{
+
+  followLine(); // follow line
+  
+  totalD=distance(); // count distance travelled
+  lcd.setCursor(11,1);
+  lcd.print(totalD);
+
+  ////////// MPU6050 //////////////////
+  sensors_event_t a, g, temp;
+	mpu.getEvent(&a, &g, &temp);
+  delay(100);
+
+  // check if ramp is present //
+  if (g.gyro.x < -0.4) 
+  {
+    Ramp = true;   
+  }
+
+  // perform ramp tasks if present //
+  while(Ramp)
+  {
+    mpu.getEvent(&a, &g, &temp);
+    delay(100);
+
+    // speed up the ramp //
+    if (a.acceleration.y < -1 && !TopOfRamp)  
+    {      
+      forwardFast();
+      float angle = atan2(a.acceleration.y, sqrt(pow(a.acceleration.x,2)  +  pow(a.acceleration.z, 2))) * 180 / PI;
+      lcd.setCursor(0, 1); 
+      lcd.print(angle);
+    }
+
+    // when reached the top of ramp //
+    if (a.acceleration.y > -0.5 && !TopOfRamp)
+    {  
+      stop();       
+      delay(4000);
+      TopOfRamp = true;
+      turnLeft();  
+      delay(1250);
+      stop();
+      delay(3000);
+      forwardSlow();  
+    }   
+
+    // going down the ramp //
+    if (a.acceleration.y > 1 && TopOfRamp)
+    {    
+      forwardSlow();
+      goingDown = true;
+    }
+
+    // reach bottom //
+    if (a.acceleration.y <=0 && TopOfRamp && goingDown)
+    {   
+      stop();
+      TopOfRamp = false;
+      Ramp = false;
+      goingDown = false;
+      delay(2000);
+    }
+  }
+
+/*
+  /////////////////////BLUETOOTH///////////////////////////
+    //check for bluetooth commands
+    if (mySerial.available() > 0) 
+    { 
+      BT = mySerial.read();
+      // Interpret Bluetooth commands and control motors accordingly
+      switch (BT) 
+      {
+        case 'F':
+            forwardSlow();
+            break;
+
+        case 'B':
+            reverse();
+            break;
+
+        case 'L':
+            turnLeft();
+            break;
+
+        case 'R':
+            turnRight();
+            break;
+
+        case 'S':
+            stop();
+            break;
+
+        default:
+            // If an unrecognized command is received
+            break;
+      }
+    }
+    
+  //////////////ULTRASONIC SENSOR///////////////////////
+    digitalWrite(trigPin, LOW);
+    delayMicroseconds(2);
+    digitalWrite(trigPin, HIGH);
+    delayMicroseconds(10);
+    digitalWrite(trigPin, LOW);
+
+    duration = pulseIn(echoPin, HIGH);
+    distance= duration*0.034/2;
+    delay(500);
+
+    if(distance < 100)  
+    {
+      stop();
+    } 
+*/
+
+}
+
+
+// FUNCTIONS //
+void forwardFast()
+{
+  digitalWrite(IN1, LOW);
+  analogWrite(IN2, 150);
+  digitalWrite(IN3, LOW);
+  analogWrite(IN4, 150);
+}
+
+void forwardSlow()
+{
+  digitalWrite(IN1, LOW);
+  analogWrite(IN2, 80);
+  digitalWrite(IN3, LOW);
+  analogWrite(IN4, 80);
+}
+
+void stop()
+{
+  digitalWrite(IN1, LOW);
+  analogWrite(IN2, 0);
+  digitalWrite(IN3, LOW);
+  analogWrite(IN4, 0);
+}
+
+void turnLeft()
+{
+  digitalWrite(IN1, LOW);
+  analogWrite(IN2, 255);
+  digitalWrite(IN3, HIGH);
+  analogWrite(IN4, 0);
+}
+
+void turnRight()
+{
+  digitalWrite(IN1, HIGH);
+  analogWrite(IN2, 0);
+  digitalWrite(IN3, LOW);
+  analogWrite(IN4, 255);
+}
+
+void reverse()
+{
+  digitalWrite(IN1, HIGH);
+  analogWrite(IN2, 0);
+  digitalWrite(IN3, HIGH);
+  analogWrite(IN4, 0);  
+}
+
+float distance()
+{
+  stateL=digitalRead(LEnc);
+  stateR=analogRead(REnc);
+
+  if(stateL != initialStateL) countL++;
+  if(stateR != initialStateR) countR++;
+
+  LD=(countL/20.0)*20.7345;
+  RD=(countR/20.0)*20.7345;
+
+  totalD=(LD+RD)/2;
+  return(totalD);
+}
+
+void followLine();
+{
+  LIRStat = analogRead(LIR); 
+  RIRStat = analogRead(RIR); // gives 30+ if something's detected else 1000+
+
+  if (LIRStat >=800 && RIRStat <100) // right detected
+  {
+    digitalWrite(IN1, HIGH);
+    analogWrite(IN2, 0);
+    digitalWrite(IN3, LOW);
+    analogWrite(IN4, 255);
+  }
+  
+  if (LIRStat <100  && RIRStat >=800) // left detected
+  {
+    digitalWrite(IN1, LOW);
+    analogWrite(IN2, 255);
+    digitalWrite(IN3, HIGH);
+    analogWrite(IN4, 0);
+  }
+
+  if (LIRStat <100  && RIRStat <100) // both white
+  {
+    digitalWrite(IN1, LOW);
+    analogWrite(IN2, 80);
+    digitalWrite(IN3, LOW);
+    analogWrite(IN4, 80);    
+  }
+
+  if (LIRStat >=800 && RIRStat >=800) // both dark
+  {
+    digitalWrite(IN1, LOW);
+    analogWrite(IN2, 0);
+    digitalWrite(IN3, LOW);
+    analogWrite(IN4, 0);
+  }
+
+
+}
+
+
